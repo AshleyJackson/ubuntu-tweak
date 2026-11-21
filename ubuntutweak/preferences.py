@@ -29,6 +29,7 @@ from ubuntutweak.clips import Clip
 from ubuntutweak.gui.dialogs import ErrorDialog, QuestionDialog
 from ubuntutweak.utils.tar import TarFile
 from ubuntutweak.common.consts import TEMP_ROOT
+from ubuntutweak.updater import GitHubUpdater, UpdateError
 from ubuntutweak.factory import WidgetFactory
 from ubuntutweak.gui.containers import GridPack
 
@@ -67,7 +68,44 @@ class PreferencesDialog(GuiBuilder):
                                                 label=_("Auto scan:"),
                                                 key='com.ubuntu-tweak.janitor.auto-scan',
                                                 backend="gsettings")
-        pack = GridPack((auto_scan_label, auto_scan_switch))
+
+        check_update_label, check_update_switch = WidgetFactory.create("Switch",
+                                                label=_("Check for updates:"),
+                                                key='com.ubuntu-tweak.tweak.check-updates',
+                                                backend="gsettings")
+
+        sentry_label, sentry_switch = WidgetFactory.create("Switch",
+                                                label=_("Send crash reports (nightly/opt-in):"),
+                                                key='com.ubuntu-tweak.tweak.sentry-enabled',
+                                                backend="gsettings")
+
+        self.channel_combo = Gtk.ComboBoxText()
+        self.channel_combo.append('stable', _('Stable releases'))
+        self.channel_combo.append('nightly', _('Nightly prereleases'))
+        self.channel_setting = GSetting('com.ubuntu-tweak.tweak.update-channel')
+        active_channel = self.channel_setting.get_value() or 'stable'
+        if active_channel not in ('stable', 'nightly'):
+            active_channel = 'stable'
+        self.channel_combo.set_active_id(active_channel)
+        self.channel_combo.connect('changed', self.on_channel_changed)
+
+        self.sentry_dsn_entry = Gtk.Entry()
+        self.sentry_dsn_entry.set_placeholder_text(_('Sentry DSN (required for crash reporting)'))
+        self.sentry_dsn_setting = GSetting('com.ubuntu-tweak.tweak.sentry-dsn')
+        self.sentry_dsn_entry.set_text(self.sentry_dsn_setting.get_value() or '')
+        self.sentry_dsn_entry.connect('changed', self.on_sentry_dsn_changed)
+
+        self.check_now_button = Gtk.Button(label=_('Check for updates now'))
+        self.check_now_button.connect('clicked', self.on_check_updates_now_clicked)
+
+        pack = GridPack((
+            auto_scan_label, auto_scan_switch,
+            Gtk.Label(label=_('Update channel:')), self.channel_combo,
+            check_update_label, check_update_switch,
+            sentry_label, sentry_switch,
+            Gtk.Label(label=_('Sentry DSN:')), self.sentry_dsn_entry,
+            Gtk.Label(label=''), self.check_now_button,
+        ))
         self.generic_alignment.add(pack)
 
         self.generic_alignment.show_all()
@@ -133,6 +171,43 @@ class PreferencesDialog(GuiBuilder):
 
     def hide(self):
         return self.preferences_dialog.hide()
+
+    def on_channel_changed(self, widget):
+        channel = widget.get_active_id() or 'stable'
+        self.channel_setting.set_value(channel)
+
+    def on_sentry_dsn_changed(self, widget):
+        self.sentry_dsn_setting.set_value(widget.get_text().strip())
+
+    def on_check_updates_now_clicked(self, widget):
+        channel = self.channel_combo.get_active_id() or 'stable'
+        updater = GitHubUpdater(channel=channel)
+        try:
+            info = updater.check()
+        except Exception, e:
+            ErrorDialog(title=_('Update check failed'),
+                        message=str(e)).launch()
+            return
+
+        if info.get('update_available'):
+            msg = _('A {0} update is available: {1}\n\n{2}').format(
+                channel, info.get('remote_version', ''), info.get('html_url', ''))
+            dialog = QuestionDialog(title=_('Update available'), message=msg)
+            response = dialog.run()
+            dialog.destroy()
+            if response == Gtk.ResponseType.YES:
+                try:
+                    # Conservative: download only; user installs/replaces bundle manually.
+                    updater.download(info)
+                    ErrorDialog(title=_('Update downloaded'),
+                                message=_('Update asset downloaded and verified. Extract/install it manually for safety.')).launch()
+                except Exception, e:
+                    ErrorDialog(title=_('Update failed'),
+                                message=str(e)).launch()
+        else:
+            ErrorDialog(title=_('No updates available'),
+                        message=_('You are running the latest %s release.') % channel,
+                        type=Gtk.MessageType.INFO).launch()
 
     def on_move_up_button_clicked(self, widget):
         model, iter = self.clip_view.get_selection().get_selected()

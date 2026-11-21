@@ -49,6 +49,41 @@
 			  Last clip selection location
 			</description>
 		</key>
+		<key name="update-channel" type="s">
+			<default>'stable'</default>
+			<summary>Update channel</summary>
+			<description>
+			  GitHub release channel to check: stable or nightly.
+			</description>
+		</key>
+		<key name="check-updates" type="b">
+			<default>true</default>
+			<summary>Check for updates</summary>
+			<description>
+			  Check GitHub releases for updates on startup.
+			</description>
+		</key>
+		<key name="last-update-check" type="s">
+			<default>''</default>
+			<summary>Last update check timestamp</summary>
+			<description>
+			  ISO timestamp of last GitHub update check.
+			</description>
+		</key>
+		<key name="sentry-enabled" type="b">
+			<default>false</default>
+			<summary>Enable Sentry error reporting</summary>
+			<description>
+			  Send sanitized crash reports to Sentry. Intended for nightly/testing builds and opt-in.
+			</description>
+		</key>
+		<key name="sentry-dsn" type="s">
+			<default>''</default>
+			<summary>Sentry DSN</summary>
+			<description>
+			  Sentry DSN used for error reporting. Leave empty to disable reporting.
+			</description>
+		</key>
 		<key name="appcenter-has-update" type="b">
 			<default>false</default>
 			<summary>Last clip selection location</summary>

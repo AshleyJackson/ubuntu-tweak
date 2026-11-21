@@ -34,6 +34,9 @@ from ubuntutweak.janitor import JanitorPage
 from ubuntutweak.policykit.dbusproxy import proxy
 from ubuntutweak.settings import GSetting
 from ubuntutweak.preferences import PreferencesDialog
+from ubuntutweak.common.metadata import get_build_metadata
+from ubuntutweak.gui.dialogs import QuestionDialog
+from ubuntutweak.updater import GitHubUpdater
 
 log = logging.getLogger('app')
 
@@ -337,6 +340,7 @@ class UbuntuTweakWindow(GuiBuilder):
                                           Gtk.AccelFlags.VISIBLE)
         self.mainwindow.add_accel_group(accel_group)
         thread.start_new_thread(self.preload_proxy_cache, ())
+        thread.start_new_thread(self.check_for_updates, ())
 
     def show_apps_page(self, widget):
         self.notebook.set_current_page(self.feature_dict['apps'])
@@ -614,6 +618,41 @@ class UbuntuTweakWindow(GuiBuilder):
 
         used_list.insert(0, name)
         self.recently_used_settings.set_value(used_list[:15])
+
+    def check_for_updates(self):
+        try:
+            check_enabled = GSetting('com.ubuntu-tweak.tweak.check-updates').get_value()
+            channel = GSetting('com.ubuntu-tweak.tweak.update-channel').get_value() or 'stable'
+        except Exception, e:
+            log.debug('Update settings unavailable: %s', e)
+            return
+
+        if not check_enabled:
+            return
+
+        try:
+            updater = GitHubUpdater(channel=channel)
+            info = updater.check()
+        except Exception, e:
+            log.debug('Update check failed: %s', e)
+            return
+
+        if info.get('update_available'):
+            GObject.idle_add(self._notify_update_available, info)
+
+    def _notify_update_available(self, info):
+        channel = info.get('channel', 'stable')
+        version = info.get('remote_version', '')
+        url = info.get('html_url', '')
+        dialog = QuestionDialog(
+            title=_('Update available'),
+            message=_('A {0} update is available: {1}\n\nOpen the release page?').format(channel, version))
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.YES and url:
+            import webbrowser
+            webbrowser.open(url)
+        return False
 
     def present(self):
         self.mainwindow.present()
