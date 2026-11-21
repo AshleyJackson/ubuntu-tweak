@@ -1,0 +1,129 @@
+name: Nightly bundle
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Weekly, Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check recent commits
+    runs-on: ubuntu-latest
+    outputs:
+      has_commits: ${{ steps.recent.outputs.has_commits }}
+      sha: ${{ steps.recent.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for commits in last 7 days
+        id: recent
+        shell: bash
+        run: |
+          set -euo pipefail
+          COUNT=$(git rev-list --count --since="7 days ago" HEAD)
+          SHA=$(git rev-parse HEAD)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "has_commits=true" >> "$GITHUB_OUTPUT"
+            echo "Recent commits found: $COUNT"
+          else
+            echo "has_commits=false" >> "$GITHUB_OUTPUT"
+            echo "No commits in last 7 days; skipping nightly build."
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  build-release:
+    name: Build and publish nightly
+    runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.has_commits == 'true'
+    env:
+      UPDATE_CHANNEL: nightly
+      UPDATE_REPO: ${{ github.repository }}
+      BUILD_COMMIT: ${{ needs.check.outputs.sha }}
+      BUNDLE_NAME: ubuntu-tweak-bundle
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/docker/Dockerfile.trusty
+          tags: ut-build:14.04
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          docker run --rm \
+            -v "$PWD/build/docker/build-bundle.sh:/build-bundle.sh:ro" \
+            -v "$PWD/dist:/out" \
+            -e UPDATE_CHANNEL="$UPDATE_CHANNEL" \
+            -e UPDATE_REPO="$UPDATE_REPO" \
+            -e BUILD_COMMIT="$BUILD_COMMIT" \
+            -e BUNDLE_NAME="$BUNDLE_NAME" \
+            ut-build:14.04 \
+            bash -lc 'bash /build-bundle.sh /out'
+          test -f "dist/${BUNDLE_NAME}.tar.gz"
+
+      - name: Smoke test bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/dist/${BUNDLE_NAME}.tar.gz:/tmp/bundle.tar.gz:ro" \
+            ut-build:14.04 \
+            bash -lc 'set -e; mkdir -p /test && tar -xzf /tmp/bundle.tar.gz -C /test; \
+              /test/ubuntu-tweak-bundle/bin/ubuntu-tweak-shell -c "import ubuntutweak; print(ubuntutweak.__version__)"; \
+              xvfb-run -a /test/ubuntu-tweak-bundle/bin/ubuntu-tweak-shell -c "import gi; gi.require_version(\"Gtk\",\"3.0\"); from gi.repository import Gtk, WebKit; print(\"gtk/webkit ok\")"'
+
+      - name: Create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "${BUNDLE_NAME}.tar.gz" > "${BUNDLE_NAME}.tar.gz.sha256"
+          cat "${BUNDLE_NAME}.tar.gz.sha256"
+
+      - name: Publish nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="nightly"
+          TITLE="Nightly $(date -u +%Y-%m-%d)"
+          NOTES="Automated weekly nightly build.
+
+          - Commit: ${BUILD_COMMIT}
+          - Channel: nightly
+          - Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          This prerelease is only published when commits were made in the previous 7 days."
+
+          gh release delete "$TAG" -y --cleanup-tag >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            "dist/${BUNDLE_NAME}.tar.gz" \
+            "dist/${BUNDLE_NAME}.tar.gz.sha256" \
+            --prerelease \
+            --target "$BUILD_COMMIT" \
+            --title "$TITLE" \
+            --notes "$NOTES"

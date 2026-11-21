@@ -1,0 +1,11 @@
+.git
+.github
+build/ubuntu-tweak-bundle.tar.gz
+dist
+__pycache__
+*.pyc
+*.pyo
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
