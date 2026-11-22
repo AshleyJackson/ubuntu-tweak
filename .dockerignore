@@ -1,6 +1,6 @@
 .git
 .github
-build/ubuntu-tweak-bundle.tar.gz
+build/
 dist
 __pycache__
 *.pyc
