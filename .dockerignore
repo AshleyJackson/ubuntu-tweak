@@ -1,6 +1,7 @@
 .git
 .github
-build/
+# Keep build/docker/* in the context (Dockerfile + bundle script); exclude only large artifacts.
+build/ubuntu-tweak-bundle.tar.gz
 dist
 __pycache__
 *.pyc
