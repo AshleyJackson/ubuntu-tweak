@@ -1,0 +1,58 @@
+FROM ubuntu:14.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYENV_ROOT=/opt/pyenv \
+    PYTHON_VERSION=2.7.18 \
+    BUNDLE_PREFIX=/opt/ubuntu-tweak-bundle
+
+# Trusty is EOL; archive.ubuntu.com still hosts it (old-releases does not for trusty).
+RUN rm -f /etc/apt/sources.list.d/*esm* && \
+    sed -i -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+           /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl git build-essential make patch \
+      libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev \
+      libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev \
+      python-gi python-dbus python-apt python-xdg python-lxml \
+      gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 gir1.2-pango-1.0 gir1.2-glib-2.0 \
+      gir1.2-notify-0.7 gir1.2-webkit-3.0 gir1.2-soup-2.4 \
+      libgirepository1.0-dev libdbus-1-dev libdbus-glib-1-dev \
+      pkg-config \
+      gsettings-desktop-schemas dconf-gsettings-backend \
+      xvfb dbus-x11 \
+      file binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Extra build dep needed by setup.cfg (DistUtilsExtra)
+RUN apt-get update && apt-get install -y --no-install-recommends python-distutils-extra && rm -rf /var/lib/apt/lists/*
+
+# Install pyenv
+RUN curl -fsSL https://pyenv.run | bash
+ENV PATH="$PYENV_ROOT/bin:$PYENV_ROOT/shims:$PATH"
+
+# Build Python 2.7.18 with shared lib for bundling flexibility
+RUN eval "$(pyenv init -)" && \
+    PYTHON_CONFIGURE_OPTS="--enable-shared" pyenv install $PYTHON_VERSION && \
+    pyenv global $PYTHON_VERSION && \
+    python --version
+
+# Create venv and base pip tools
+RUN eval "$(pyenv init -)" && \
+    python -m pip install --upgrade "pip<21" "setuptools<45" "wheel<1" virtualenv && \
+    python -m virtualenv /opt/venv
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /src
+COPY . /src
+
+# Install project into venv in a bundle-friendly layout.
+# We keep source install editable-like? No, install properly into bundle prefix.
+RUN /opt/venv/bin/python setup.py install --prefix=/opt/bundle-root/usr \
+    --single-version-externally-managed --record=/tmp/install-record.txt || \
+    /opt/venv/bin/python setup.py install --prefix=/opt/bundle-root/usr
+
+# The runtime launcher will be added by build-bundle.sh
+CMD ["/bin/bash"]
